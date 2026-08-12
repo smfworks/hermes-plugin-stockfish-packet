@@ -1,0 +1,201 @@
+"""stockfish-packet plugin."""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+try:
+    from . import packet as pk
+except ImportError:
+    import packet as pk
+
+logger = logging.getLogger(__name__)
+
+VALIDATE_SCHEMA = {
+    "name": "stockfish_validate",
+    "description": (
+        "Validate a grounded research packet (JSON object or path). Checks "
+        "claim-source integrity, URL shape, orphans, and returns grade "
+        "rotten|wet|curing|stockfish."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "packet": {"type": "object", "description": "Inline packet object"},
+            "path": {"type": "string", "description": "Path to packet JSON file"},
+        },
+    },
+}
+
+INIT_SCHEMA = {
+    "name": "stockfish_init_packet",
+    "description": "Create an empty stockfish research packet scaffold (smf.stockfish_packet.v1).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "topic": {"type": "string"},
+            "place": {"type": "string"},
+            "path": {"type": "string", "description": "Optional path to write JSON"},
+        },
+        "required": ["title", "topic"],
+    },
+}
+
+OPPOSE_SCHEMA = {
+    "name": "stockfish_oppose_claims",
+    "description": (
+        "Run heuristic oppositional assessment on packet claims (weasel words, "
+        "single-source, single-domain, absolute+high-conf)."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "packet": {"type": "object"},
+            "path": {"type": "string"},
+        },
+    },
+}
+
+
+def _load(args: dict) -> dict:
+    if args.get("packet"):
+        return args["packet"]
+    path = args.get("path")
+    if not path:
+        raise ValueError("Provide packet object or path")
+    return pk.load_packet(path)
+
+
+def handle_validate(args: dict, **kwargs) -> str:
+    del kwargs
+    try:
+        p = _load(args)
+        return json.dumps(pk.validate_packet(p), indent=2)
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})
+
+
+def handle_init(args: dict, **kwargs) -> str:
+    del kwargs
+    try:
+        p = pk.init_packet(args.get("title", ""), args.get("topic", ""), args.get("place"))
+        path = args.get("path")
+        if path:
+            pk.save_packet(path, p)
+            return json.dumps({"ok": True, "path": path, "packet": p}, indent=2)
+        return json.dumps(p, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def handle_oppose(args: dict, **kwargs) -> str:
+    del kwargs
+    try:
+        p = _load(args)
+        result = pk.oppose_claims(p)
+        path = args.get("path")
+        if path and result.get("packet"):
+            pk.save_packet(path, result["packet"])
+            result["wrote"] = path
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _cli(argv: Any) -> None:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="hermes stockfish")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_init = sub.add_parser("init")
+    p_init.add_argument("--title", required=True)
+    p_init.add_argument("--topic", required=True)
+    p_init.add_argument("--place")
+    p_init.add_argument("--out", required=True)
+    p_val = sub.add_parser("validate")
+    p_val.add_argument("path")
+    p_op = sub.add_parser("oppose")
+    p_op.add_argument("path")
+    p_op.add_argument("--write", action="store_true")
+    sub.add_parser("selftest")
+    ns = parser.parse_args(argv if isinstance(argv, list) else None)
+    if ns.cmd == "init":
+        p = pk.init_packet(ns.title, ns.topic, ns.place)
+        pk.save_packet(ns.out, p)
+        print(ns.out)
+    elif ns.cmd == "validate":
+        print(json.dumps(pk.validate_packet(pk.load_packet(ns.path)), indent=2))
+    elif ns.cmd == "oppose":
+        r = pk.oppose_claims(pk.load_packet(ns.path))
+        if ns.write:
+            pk.save_packet(ns.path, r["packet"])
+        print(
+            json.dumps(
+                {
+                    "status": r["status"],
+                    "findings": r["findings"],
+                    "summary": r["summary"],
+                },
+                indent=2,
+            )
+        )
+    elif ns.cmd == "selftest":
+        r = __import__("subprocess").run(
+            [sys.executable, "-m", "pytest", str(Path(__file__).parent / "tests"), "-q"]
+        )
+        raise SystemExit(r.returncode)
+
+
+def register(ctx):
+    ctx.register_tool(
+        name="stockfish_validate",
+        toolset="stockfish",
+        schema=VALIDATE_SCHEMA,
+        handler=handle_validate,
+    )
+    ctx.register_tool(
+        name="stockfish_init_packet",
+        toolset="stockfish",
+        schema=INIT_SCHEMA,
+        handler=handle_init,
+    )
+    ctx.register_tool(
+        name="stockfish_oppose_claims",
+        toolset="stockfish",
+        schema=OPPOSE_SCHEMA,
+        handler=handle_oppose,
+    )
+    ctx.register_command(
+        "stockfish", lambda raw: _slash(raw), description="Stockfish packet: validate path"
+    )
+    try:
+        ctx.register_cli_command(
+            "stockfish",
+            _cli,
+            help="Grounded research packet tools",
+            description="Stockfish research packets",
+        )
+    except TypeError:
+        try:
+            ctx.register_cli_command("stockfish", _cli)
+        except Exception as e:
+            logger.warning("cli: %s", e)
+    skill = Path(__file__).parent / "skills" / "stockfish-research"
+    if (skill / "SKILL.md").is_file():
+        try:
+            ctx.register_skill(str(skill))
+        except Exception as e:
+            logger.debug("%s", e)
+
+
+def _slash(raw: str) -> str:
+    parts = (raw or "").split()
+    if len(parts) >= 2 and parts[0] == "validate":
+        return handle_validate({"path": parts[1]})
+    if len(parts) >= 2 and parts[0] == "oppose":
+        return handle_oppose({"path": parts[1]})
+    return json.dumps({"error": "usage: /stockfish validate <path> | oppose <path>"})

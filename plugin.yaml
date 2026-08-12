@@ -1,0 +1,16 @@
+name: stockfish-packet
+version: 1.0.0
+description: >
+  Grounded research packets with claim-citation integrity checks.
+  Named for torrfisk/stockfish — air-dried cod of the Lofoten fishery.
+author: SMF Works / Team Skrei (Lofoten Sprint 2026-08-12)
+provides_tools:
+  - stockfish_validate
+  - stockfish_init_packet
+  - stockfish_oppose_claims
+provides_commands:
+  - stockfish
+provides_cli_commands:
+  - stockfish
+provides_skills:
+  - stockfish-research
