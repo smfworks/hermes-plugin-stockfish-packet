@@ -186,6 +186,21 @@ def test_oppose_does_not_write_without_flag(tmp_path):
     assert dest.read_text() != before
 
 
+def test_empty_claim_id_rotten():
+    p = init_packet("T", "t")
+    p["sources"] = [{"id": "s1", "url": "https://example.com/a", "title": "A"}]
+    p["claims"] = [{"id": "", "text": "X", "support": ["s1"], "confidence": 0.5}]
+    v = validate_packet(p)
+    assert v["ok"] is False
+    assert v["grade"] == "rotten"
+
+
+def test_oppose_none_does_not_raise():
+    r = oppose_claims(None)  # type: ignore
+    assert r["ok"] is False
+    assert r["status"] == "fail"
+
+
 def test_bool_confidence_rejected():
     p = init_packet("T", "t")
     p["sources"] = [{"id": "s1", "url": "https://example.com/a", "title": "A"}]
