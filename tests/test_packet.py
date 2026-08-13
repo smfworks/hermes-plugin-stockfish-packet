@@ -173,6 +173,19 @@ def test_load_rejects_non_object(tmp_path):
         pass
 
 
+def test_oppose_does_not_write_without_flag(tmp_path):
+    plug = _load_plugin()
+    dest = tmp_path / "p.json"
+    save_packet(str(dest), init_packet("T", "t"))
+    before = dest.read_text()
+    raw = json.loads(plug.handle_oppose({"path": str(dest)}))
+    assert "wrote" not in raw
+    assert dest.read_text() == before
+    raw2 = json.loads(plug.handle_oppose({"path": str(dest), "write": True}))
+    assert raw2.get("wrote")
+    assert dest.read_text() != before
+
+
 def test_handler_refuses_protected_write():
     plug = _load_plugin()
     raw = json.loads(
