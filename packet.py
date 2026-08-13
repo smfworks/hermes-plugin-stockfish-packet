@@ -2,23 +2,48 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
+
+__version__ = "1.1.0"
 
 REQUIRED_TOP = ["title", "topic", "claims", "sources", "method"]
 CLAIM_REQUIRED = ["id", "text", "support"]
 SOURCE_REQUIRED = ["id", "url", "title"]
 URL_RE = re.compile(r"^https?://", re.I)
+PACKET_MAX_BYTES = 2_000_000
+_BLOCKED_PREFIXES = ("/etc", "/proc", "/sys", "/dev", "/root", "/boot")
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def safe_user_path(path: str, *, must_exist: bool = False) -> Path:
+    if not path or not isinstance(path, str) or "\x00" in path:
+        raise ValueError("invalid path")
+    p = Path(path).expanduser()
+    try:
+        p = p.resolve()
+    except OSError as e:
+        raise ValueError(f"unresolvable path: {e}") from e
+    s = str(p)
+    if s == "/" or any(s == b or s.startswith(b + os.sep) for b in _BLOCKED_PREFIXES):
+        raise ValueError("refusing path in protected filesystem area")
+    if must_exist and not p.exists():
+        raise FileNotFoundError(s)
+    return p
+
+
 def init_packet(title: str, topic: str, place: Optional[str] = None) -> Dict[str, Any]:
+    if not str(title or "").strip() or not str(topic or "").strip():
+        raise ValueError("title and topic are required")
     return {
         "schema": "smf.stockfish_packet.v1",
         "title": title,
@@ -55,9 +80,11 @@ def validate_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(packet, dict):
         return {
             "ok": False,
+            "version": __version__,
             "errors": [_err("$", "packet must be an object")],
             "warnings": [],
             "stats": {},
+            "grade": "rotten",
         }
 
     for k in REQUIRED_TOP:
@@ -160,6 +187,7 @@ def validate_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
     }
     return {
         "ok": len(errors) == 0,
+        "version": __version__,
         "errors": errors,
         "warnings": warnings,
         "stats": stats,
@@ -204,7 +232,11 @@ def oppose_claims(packet: Dict[str, Any]) -> Dict[str, Any]:
                     "detail": "Weasel / empty authority language",
                 }
             )
-        if absolute.search(text) and float(c.get("confidence") or 0) >= 0.9:
+        try:
+            conf_f = float(c.get("confidence") or 0)
+        except (TypeError, ValueError):
+            conf_f = 0.0
+        if absolute.search(text) and conf_f >= 0.9:
             findings.append(
                 {
                     "claim_id": cid,
@@ -270,6 +302,8 @@ def oppose_claims(packet: Dict[str, Any]) -> Dict[str, Any]:
         "method": "heuristic-v1",
     }
     return {
+        "ok": True,
+        "version": __version__,
         "status": status,
         "findings": findings,
         "packet": out,
@@ -278,11 +312,34 @@ def oppose_claims(packet: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_packet(path: str) -> Dict[str, Any]:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    p = safe_user_path(path, must_exist=True)
+    if not p.is_file():
+        raise ValueError(f"not a file: {p}")
+    size = p.stat().st_size
+    if size > PACKET_MAX_BYTES:
+        raise ValueError(f"packet too large ({size} bytes)")
+    with p.open(encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("packet JSON must be an object")
+    return data
 
 
-def save_packet(path: str, packet: Dict[str, Any]) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(packet, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+def save_packet(path: str, packet: Dict[str, Any]) -> str:
+    if not isinstance(packet, dict):
+        raise ValueError("packet must be an object")
+    p = safe_user_path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".stockfish-", suffix=".json", dir=str(p.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(packet, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, p)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return str(p)
