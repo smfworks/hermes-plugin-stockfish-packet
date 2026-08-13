@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 — 2026-08-13
+
+Oppositional gold pass.
+
+- Reject bool confidence and non-list sources/claims
+- Skip empty source ids (no phantom None duplicates)
+- CLI validate exits 1 on rotten packets
+- Slash paths via shlex
+
+
 ## 1.1.1 — 2026-08-13
 
 Lookout follow-up.

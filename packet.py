@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 REQUIRED_TOP = ["title", "topic", "claims", "sources", "method"]
 CLAIM_REQUIRED = ["id", "text", "support"]
@@ -91,8 +91,20 @@ def validate_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
         if k not in packet:
             errors.append(_err(k, f"missing required field '{k}'"))
 
-    sources = packet.get("sources") if isinstance(packet.get("sources"), list) else []
-    claims = packet.get("claims") if isinstance(packet.get("claims"), list) else []
+    sources_raw = packet.get("sources")
+    claims_raw = packet.get("claims")
+    if "sources" in packet and not isinstance(sources_raw, list):
+        errors.append(_err("sources", "must be a list"))
+        sources = []
+    else:
+        sources = sources_raw if isinstance(sources_raw, list) else []
+    if "claims" in packet and not isinstance(claims_raw, list):
+        errors.append(_err("claims", "must be a list"))
+        claims = []
+    else:
+        claims = claims_raw if isinstance(claims_raw, list) else []
+    if packet.get("schema") != "smf.stockfish_packet.v1":
+        warnings.append(_err("schema", "expected smf.stockfish_packet.v1", "warning"))
     source_ids = set()
 
     for i, s in enumerate(sources):
@@ -103,6 +115,8 @@ def validate_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
             if not s.get(rk):
                 errors.append(_err(f"sources[{i}].{rk}", "required"))
         sid = s.get("id")
+        if not sid:
+            continue
         if sid in source_ids:
             errors.append(_err(f"sources[{i}].id", f"duplicate id {sid}"))
         source_ids.add(sid)
@@ -146,12 +160,15 @@ def validate_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
             )
         conf = c.get("confidence")
         if conf is not None:
-            try:
-                cf = float(conf)
-                if not 0.0 <= cf <= 1.0:
-                    errors.append(_err(f"claims[{i}].confidence", "must be 0..1"))
-            except (TypeError, ValueError):
-                errors.append(_err(f"claims[{i}].confidence", "must be number"))
+            if isinstance(conf, bool) or not isinstance(conf, (int, float)):
+                errors.append(_err(f"claims[{i}].confidence", "must be number 0..1"))
+            else:
+                try:
+                    cf = float(conf)
+                    if not 0.0 <= cf <= 1.0:
+                        errors.append(_err(f"claims[{i}].confidence", "must be 0..1"))
+                except (TypeError, ValueError):
+                    errors.append(_err(f"claims[{i}].confidence", "must be number"))
         if c.get("status") == "contested" and not c.get("contest_note"):
             warnings.append(
                 _err(

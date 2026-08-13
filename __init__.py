@@ -148,7 +148,10 @@ def _cli(argv: Any) -> None:
             p = pk.init_packet(ns.title, ns.topic, ns.place)
             print(pk.save_packet(ns.out, p))
         elif ns.cmd == "validate":
-            print(json.dumps(pk.validate_packet(pk.load_packet(ns.path)), indent=2))
+            result = pk.validate_packet(pk.load_packet(ns.path))
+            print(json.dumps(result, indent=2))
+            if not result.get("ok"):
+                raise SystemExit(1)
         elif ns.cmd == "oppose":
             r = pk.oppose_claims(pk.load_packet(ns.path))
             if ns.write:
@@ -213,7 +216,9 @@ def register(ctx):
         handler=handle_oppose,
     )
     ctx.register_command(
-        "stockfish", lambda raw: _slash(raw), description="Stockfish packet: validate path"
+        name="stockfish",
+        handler=_slash,
+        description="Stockfish packet: validate path",
     )
     try:
         ctx.register_cli_command(
@@ -240,7 +245,12 @@ def register(ctx):
 
 
 def _slash(raw: str) -> str:
-    parts = (raw or "").split()
+    import shlex
+
+    try:
+        parts = shlex.split(raw or "")
+    except ValueError:
+        parts = (raw or "").split()
     if parts and parts[0] == "version":
         return json.dumps({"ok": True, "version": pk.__version__})
     if len(parts) >= 2 and parts[0] == "validate":
