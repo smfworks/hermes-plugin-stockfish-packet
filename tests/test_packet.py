@@ -186,6 +186,22 @@ def test_oppose_does_not_write_without_flag(tmp_path):
     assert dest.read_text() != before
 
 
+def test_bool_confidence_rejected():
+    p = init_packet("T", "t")
+    p["sources"] = [{"id": "s1", "url": "https://example.com/a", "title": "A"}]
+    p["claims"] = [{"id": "c1", "text": "X", "support": ["s1"], "confidence": True}]
+    v = validate_packet(p)
+    assert v["ok"] is False
+
+
+def test_sources_must_be_list():
+    p = init_packet("T", "t")
+    p["sources"] = "https://example.com"
+    v = validate_packet(p)
+    assert v["ok"] is False
+    assert any(e["path"] == "sources" for e in v["errors"])
+
+
 def test_handler_refuses_protected_write():
     plug = _load_plugin()
     raw = json.loads(
