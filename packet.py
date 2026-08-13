@@ -145,6 +145,9 @@ def validate_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
             if rk not in c:
                 errors.append(_err(f"claims[{i}].{rk}", "required"))
         cid = c.get("id")
+        if not cid:
+            errors.append(_err(f"claims[{i}].id", "required non-empty id"))
+            continue
         if cid in claim_ids:
             errors.append(_err(f"claims[{i}].id", f"duplicate id {cid}"))
         claim_ids.add(cid)
@@ -223,6 +226,15 @@ def _grade(stats, errors, warnings) -> str:
 
 
 def oppose_claims(packet: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(packet, dict):
+        return {
+            "ok": False,
+            "version": __version__,
+            "status": "fail",
+            "findings": [{"claim_id": "-", "code": "not_object", "detail": "packet must be an object"}],
+            "packet": {},
+            "summary": "Opposition fail: packet is not an object.",
+        }
     findings: List[Dict[str, str]] = []
     claims = packet.get("claims") or []
     sources = {
