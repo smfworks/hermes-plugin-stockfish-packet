@@ -60,8 +60,14 @@ OPPOSE_SCHEMA = {
 }
 
 
+def _err(exc: Exception) -> str:
+    return json.dumps({"ok": False, "error": str(exc), "version": pk.__version__})
+
+
 def _load(args: dict) -> dict:
     if args.get("packet"):
+        if not isinstance(args["packet"], dict):
+            raise ValueError("packet must be an object")
         return args["packet"]
     path = args.get("path")
     if not path:
@@ -75,7 +81,7 @@ def handle_validate(args: dict, **kwargs) -> str:
         p = _load(args)
         return json.dumps(pk.validate_packet(p), indent=2)
     except Exception as e:
-        return json.dumps({"ok": False, "error": str(e)})
+        return _err(e)
 
 
 def handle_init(args: dict, **kwargs) -> str:
@@ -84,11 +90,17 @@ def handle_init(args: dict, **kwargs) -> str:
         p = pk.init_packet(args.get("title", ""), args.get("topic", ""), args.get("place"))
         path = args.get("path")
         if path:
-            pk.save_packet(path, p)
-            return json.dumps({"ok": True, "path": path, "packet": p}, indent=2)
-        return json.dumps(p, indent=2)
+            wrote = pk.save_packet(path, p)
+            return json.dumps(
+                {"ok": True, "version": pk.__version__, "path": wrote, "packet": p},
+                indent=2,
+            )
+        p_out = dict(p)
+        p_out["ok"] = True
+        p_out["version"] = pk.__version__
+        return json.dumps(p_out, indent=2)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
 
 
 def handle_oppose(args: dict, **kwargs) -> str:
@@ -98,11 +110,10 @@ def handle_oppose(args: dict, **kwargs) -> str:
         result = pk.oppose_claims(p)
         path = args.get("path")
         if path and result.get("packet"):
-            pk.save_packet(path, result["packet"])
-            result["wrote"] = path
+            result["wrote"] = pk.save_packet(path, result["packet"])
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
 
 
 def _cli(argv: Any) -> None:
@@ -122,32 +133,43 @@ def _cli(argv: Any) -> None:
     p_op.add_argument("path")
     p_op.add_argument("--write", action="store_true")
     sub.add_parser("selftest")
+    sub.add_parser("version")
     ns = parser.parse_args(argv if isinstance(argv, list) else None)
-    if ns.cmd == "init":
-        p = pk.init_packet(ns.title, ns.topic, ns.place)
-        pk.save_packet(ns.out, p)
-        print(ns.out)
-    elif ns.cmd == "validate":
-        print(json.dumps(pk.validate_packet(pk.load_packet(ns.path)), indent=2))
-    elif ns.cmd == "oppose":
-        r = pk.oppose_claims(pk.load_packet(ns.path))
-        if ns.write:
-            pk.save_packet(ns.path, r["packet"])
-        print(
-            json.dumps(
-                {
-                    "status": r["status"],
-                    "findings": r["findings"],
-                    "summary": r["summary"],
-                },
-                indent=2,
+    try:
+        if ns.cmd == "version":
+            print(pk.__version__)
+            return
+        if ns.cmd == "init":
+            p = pk.init_packet(ns.title, ns.topic, ns.place)
+            print(pk.save_packet(ns.out, p))
+        elif ns.cmd == "validate":
+            print(json.dumps(pk.validate_packet(pk.load_packet(ns.path)), indent=2))
+        elif ns.cmd == "oppose":
+            r = pk.oppose_claims(pk.load_packet(ns.path))
+            if ns.write:
+                pk.save_packet(ns.path, r["packet"])
+            print(
+                json.dumps(
+                    {
+                        "ok": r.get("ok"),
+                        "version": r.get("version"),
+                        "status": r["status"],
+                        "findings": r["findings"],
+                        "summary": r["summary"],
+                    },
+                    indent=2,
+                )
             )
-        )
-    elif ns.cmd == "selftest":
-        r = __import__("subprocess").run(
-            [sys.executable, "-m", "pytest", str(Path(__file__).parent / "tests"), "-q"]
-        )
-        raise SystemExit(r.returncode)
+        elif ns.cmd == "selftest":
+            r = __import__("subprocess").run(
+                [sys.executable, "-m", "pytest", str(Path(__file__).parent / "tests"), "-q"]
+            )
+            raise SystemExit(r.returncode)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(_err(e), file=sys.stderr)
+        raise SystemExit(1)
 
 
 def register(ctx):
@@ -194,8 +216,16 @@ def register(ctx):
 
 def _slash(raw: str) -> str:
     parts = (raw or "").split()
+    if parts and parts[0] == "version":
+        return json.dumps({"ok": True, "version": pk.__version__})
     if len(parts) >= 2 and parts[0] == "validate":
         return handle_validate({"path": parts[1]})
     if len(parts) >= 2 and parts[0] == "oppose":
         return handle_oppose({"path": parts[1]})
-    return json.dumps({"error": "usage: /stockfish validate <path> | oppose <path>"})
+    return json.dumps(
+        {
+            "ok": False,
+            "error": "usage: /stockfish validate <path> | oppose <path> | version",
+            "version": pk.__version__,
+        }
+    )
