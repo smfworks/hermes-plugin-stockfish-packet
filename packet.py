@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 REQUIRED_TOP = ["title", "topic", "claims", "sources", "method"]
 CLAIM_REQUIRED = ["id", "text", "support"]

@@ -55,6 +55,10 @@ OPPOSE_SCHEMA = {
         "properties": {
             "packet": {"type": "object"},
             "path": {"type": "string"},
+            "write": {
+                "type": "boolean",
+                "description": "If true and path is set, write opposition back to the file. Default false.",
+            },
         },
     },
 }
@@ -65,7 +69,7 @@ def _err(exc: Exception) -> str:
 
 
 def _load(args: dict) -> dict:
-    if args.get("packet"):
+    if "packet" in args and args["packet"] is not None:
         if not isinstance(args["packet"], dict):
             raise ValueError("packet must be an object")
         return args["packet"]
@@ -109,7 +113,8 @@ def handle_oppose(args: dict, **kwargs) -> str:
         p = _load(args)
         result = pk.oppose_claims(p)
         path = args.get("path")
-        if path and result.get("packet"):
+        write = args.get("write") in (True, "true", "1", "yes")
+        if write and path and result.get("packet"):
             result["wrote"] = pk.save_packet(path, result["packet"])
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
@@ -134,7 +139,7 @@ def _cli(argv: Any) -> None:
     p_op.add_argument("--write", action="store_true")
     sub.add_parser("selftest")
     sub.add_parser("version")
-    ns = parser.parse_args(argv if isinstance(argv, list) else None)
+    ns = parser.parse_args(list(argv) if isinstance(argv, list) else [])
     try:
         if ns.cmd == "version":
             print(pk.__version__)
@@ -172,6 +177,22 @@ def _cli(argv: Any) -> None:
         raise SystemExit(1)
 
 
+def _cli_setup(subparser: Any) -> None:
+    subparser.add_argument("rest", nargs="*")
+
+
+def _cli_handler(ns: Any) -> int:
+    rest = list(getattr(ns, "rest", []) or [])
+    try:
+        _cli(rest)
+        return 0
+    except SystemExit as e:
+        code = e.code
+        if code is None:
+            return 0
+        return int(code) if not isinstance(code, int) else code
+
+
 def register(ctx):
     ctx.register_tool(
         name="stockfish_validate",
@@ -196,9 +217,10 @@ def register(ctx):
     )
     try:
         ctx.register_cli_command(
-            "stockfish",
-            _cli,
+            name="stockfish",
             help="Grounded research packet tools",
+            setup_fn=_cli_setup,
+            handler_fn=_cli_handler,
             description="Stockfish research packets",
         )
     except TypeError:
@@ -209,9 +231,12 @@ def register(ctx):
     skill = Path(__file__).parent / "skills" / "stockfish-research"
     if (skill / "SKILL.md").is_file():
         try:
-            ctx.register_skill(str(skill))
-        except Exception as e:
-            logger.debug("%s", e)
+            ctx.register_skill(name="stockfish-research", path=skill / "SKILL.md")
+        except TypeError:
+            try:
+                ctx.register_skill(str(skill))
+            except Exception as e:
+                logger.debug("%s", e)
 
 
 def _slash(raw: str) -> str:
